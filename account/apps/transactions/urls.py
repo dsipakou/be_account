@@ -4,6 +4,12 @@ from transactions import views
 
 urlpatterns = [
     path("", views.TransactionList.as_view(), name="transaction_list"),
+    path("transfers/", views.TransferListCreate.as_view(), name="transfer_list_create"),
+    path(
+        "transfers/<uuid:uuid>/",
+        views.TransferDetails.as_view(),
+        name="transfer_details",
+    ),
     path(
         "<uuid:uuid>/", views.TransactionDetails.as_view(), name="transaction_details"
     ),

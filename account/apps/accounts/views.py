@@ -18,7 +18,7 @@ from accounts import constants as account_constants
 from accounts.models import Account
 from accounts.permissions import BaseAccountPermission
 from accounts.serializers import AccountReassignSerializer, AccountSerializer
-from transactions.models import Transaction
+from transactions.models import Transaction, Transfer
 from users.filters import FilterByUser
 from users.permissions import BaseUserPermission
 from workspaces.filters import FilterByWorkspace
@@ -39,10 +39,15 @@ class AccountDetails(RetrieveUpdateDestroyAPIView):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        if Transaction.objects.filter(account=instance).exists():
+        if (
+            Transaction.objects.filter(account=instance).exists()
+            or Transfer.objects.filter(
+                Q(from_account=instance) | Q(to_account=instance)
+            ).exists()
+        ):
             return Response(
                 status=status.HTTP_403_FORBIDDEN,
-                data={"error": "This category has at least one transaction"},
+                data={"error": "This account has at least one transaction or transfer"},
             )
 
         self.perform_destroy(instance)

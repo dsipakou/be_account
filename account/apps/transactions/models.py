@@ -191,6 +191,34 @@ class Transaction(models.Model):
         return grouped_transactions
 
 
+class Transfer(models.Model):
+    uuid = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey("users.User", on_delete=models.DO_NOTHING, to_field="uuid")
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        to_field="uuid",
+        on_delete=models.DO_NOTHING,
+    )
+    from_account = models.ForeignKey(
+        "accounts.Account",
+        related_name="outgoing_transfers",
+        on_delete=models.DO_NOTHING,
+        to_field="uuid",
+    )
+    to_account = models.ForeignKey(
+        "accounts.Account",
+        related_name="incoming_transfers",
+        on_delete=models.DO_NOTHING,
+        to_field="uuid",
+    )
+    currency = models.ForeignKey(Currency, on_delete=models.DO_NOTHING, to_field="uuid")
+    amount = models.FloatField()
+    description = models.CharField(max_length=255, blank=True)
+    transfer_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    modified_at = models.DateTimeField(auto_now=True)
+
+
 class TransactionMulticurrency(models.Model):
     uuid = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
     transaction = models.OneToOneField(

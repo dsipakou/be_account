@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from account.apps.transactions.serializers import LastViewedSerializer
 from categories import constants
 from categories.models import Category
-from transactions.models import LastViewed, Transaction
+from transactions.models import LastViewed, Transaction, Transfer
 from transactions.serializers import (
     AccountUsageSerializer,
     GroupedTransactionSerializer,
@@ -32,6 +32,8 @@ from transactions.serializers import (
     TransactionDetailsSerializer,
     TransactionSerializer,
     TransactionUpdateSerializer,
+    TransferCreateSerializer,
+    TransferSerializer,
 )
 from transactions.services import ReportService, TransactionService
 from users.filters import FilterByUser
@@ -231,6 +233,39 @@ class CategoryTransactions(ListAPIView):
 class TransactionDetails(RetrieveDestroyAPIView):
     queryset = Transaction.objects.all()
     serializer_class = TransactionDetailsSerializer
+    filter_backends = (FilterByUser, FilterByWorkspace)
+    lookup_field = "uuid"
+
+
+class TransferListCreate(ListCreateAPIView):
+    queryset = Transfer.objects.select_related(
+        "currency", "from_account", "to_account", "user"
+    ).all()
+    filter_backends = (FilterByUser, FilterByWorkspace)
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return TransferCreateSerializer
+        return TransferSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        transfer = serializer.save()
+        response_serializer = TransferSerializer(transfer)
+        headers = self.get_success_headers(response_serializer.data)
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
+
+class TransferDetails(RetrieveDestroyAPIView):
+    queryset = Transfer.objects.select_related(
+        "currency", "from_account", "to_account", "user"
+    ).all()
+    serializer_class = TransferSerializer
     filter_backends = (FilterByUser, FilterByWorkspace)
     lookup_field = "uuid"
 
