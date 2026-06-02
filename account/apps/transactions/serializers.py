@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from accounts import constants as account_constants
 from categories import constants
 from transactions.models import LastViewed, Transaction
 
@@ -13,6 +14,7 @@ class TransactionCategorySerializer(serializers.Serializer):
 
 class TransactionAccountSerializer(serializers.Serializer):
     title = serializers.CharField()
+    kind = serializers.CharField()
 
 
 class TransactionBudgetSerializer(serializers.Serializer):
@@ -76,6 +78,10 @@ class GroupedTransactionSerializer(serializers.Serializer):
 
 
 class TransactionCreateSerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        _validate_regular_transaction_account(attrs)
+        return attrs
+
     class Meta:
         model = Transaction
         fields = (
@@ -105,6 +111,10 @@ class TransactionCreateSerializer(serializers.ModelSerializer):
 
 class TransactionBulkCreateSerializer(serializers.ModelSerializer):
     row_id = serializers.IntegerField(write_only=True, required=True)
+
+    def validate(self, attrs):
+        _validate_regular_transaction_account(attrs)
+        return attrs
 
     class Meta:
         model = Transaction
@@ -155,6 +165,10 @@ class TransactionDetailsSerializer(serializers.ModelSerializer):
 
 
 class TransactionUpdateSerializer(serializers.ModelSerializer):
+    def validate(self, attrs):
+        _validate_regular_transaction_account(attrs, self.instance)
+        return attrs
+
     class Meta:
         model = Transaction
         fields = (
@@ -214,3 +228,12 @@ class LastViewedSerializer(serializers.ModelSerializer):
             "user",
             "transaction",
         )
+
+
+def _validate_regular_transaction_account(attrs, instance=None):
+    account = attrs.get("account")
+    if account is None and instance is not None:
+        account = instance.account
+
+    if account is not None and account.kind == account_constants.SAVINGS:
+        raise ValidationError("Savings accounts only support transfers")

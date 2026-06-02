@@ -10,7 +10,8 @@ class TransactionCategoryDetails(TypedDict):
 
 
 class TransactionAccountDetails(TypedDict):
-    source: str
+    title: str
+    kind: str
 
 
 class TransactionCurrencyDetails(TypedDict):

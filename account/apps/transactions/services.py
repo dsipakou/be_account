@@ -65,6 +65,7 @@ class TransactionService:
         )
         account_details = TransactionAccountDetails(
             title=transaction.account.title,
+            kind=transaction.account.kind,
         )
         currency_details = TransactionCurrencyDetails(
             sign=transaction.currency.sign,

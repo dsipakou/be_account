@@ -14,6 +14,7 @@ from rest_framework.generics import (
 from rest_framework.response import Response
 
 from account.apps.categories.constants import EXPENSE, INCOME
+from accounts import constants as account_constants
 from accounts.models import Account
 from accounts.permissions import BaseAccountPermission
 from accounts.serializers import AccountReassignSerializer, AccountSerializer
@@ -48,6 +49,12 @@ class AccountDetails(RetrieveUpdateDestroyAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.kind == account_constants.SAVINGS:
+            instance.usage = []
+            serializer = self.get_serializer(instance)
+            return Response(serializer.data)
+
         today = date.today()
         start_date = (
             (today.replace(day=1) - timedelta(days=1)) - relativedelta(months=2)
@@ -56,7 +63,6 @@ class AccountDetails(RetrieveUpdateDestroyAPIView):
 
         currency_code = request.user.currency_code()
 
-        instance = self.get_object()
         qs = (
             Transaction.objects.filter(
                 account_id=instance.uuid,
