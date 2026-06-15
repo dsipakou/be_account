@@ -3,7 +3,7 @@ from rest_framework.exceptions import ValidationError
 
 from accounts import constants as account_constants
 from categories import constants
-from transactions.models import LastViewed, Transaction
+from transactions.models import LastViewed, Transaction, Transfer
 
 
 class TransactionCategorySerializer(serializers.Serializer):
@@ -54,9 +54,130 @@ class TransactionBulkSerializer(TransactionSerializer):
     row_id = serializers.IntegerField(read_only=True)
 
 
+class TransferAccountSerializer(serializers.Serializer):
+    title = serializers.CharField()
+    kind = serializers.CharField()
+
+
 class AccountUsageSerializer(serializers.Serializer):
     spent = serializers.FloatField()
     income = serializers.FloatField()
+
+
+class TransferSerializer(serializers.ModelSerializer):
+    from_account_details = TransferAccountSerializer(
+        source="from_account", read_only=True
+    )
+    to_account_details = TransferAccountSerializer(source="to_account", read_only=True)
+    currency_details = TransactionCurrencySerializer(source="currency", read_only=True)
+    spent_in_currencies = serializers.DictField(
+        source="multicurrency_map", read_only=True
+    )
+
+    class Meta:
+        model = Transfer
+        fields = (
+            "uuid",
+            "user",
+            "from_account",
+            "from_account_details",
+            "to_account",
+            "to_account_details",
+            "currency",
+            "transfer_budget",
+            "currency_details",
+            "amount",
+            "spent_in_currencies",
+            "description",
+            "transfer_date",
+            "created_at",
+            "modified_at",
+        )
+
+
+class TransferCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Transfer
+        fields = (
+            "from_account",
+            "to_account",
+            "currency",
+            "transfer_budget",
+            "amount",
+            "description",
+            "transfer_date",
+        )
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        workspace = request.user.active_workspace
+        from_account = attrs["from_account"]
+        to_account = attrs["to_account"]
+        currency = attrs["currency"]
+        transfer_budget = attrs.get("transfer_budget")
+
+        if from_account == to_account:
+            raise ValidationError("Cannot transfer to the same account")
+
+        if (
+            from_account.workspace_id != workspace.uuid
+            or to_account.workspace_id != workspace.uuid
+        ):
+            raise ValidationError(
+                "Transfer accounts must belong to the active workspace"
+            )
+
+        if currency.workspace_id != workspace.uuid:
+            raise ValidationError(
+                "Transfer currency must belong to the active workspace"
+            )
+
+        if transfer_budget and transfer_budget.workspace_id != workspace.uuid:
+            raise ValidationError("Transfer budget must belong to the active workspace")
+
+        if transfer_budget and transfer_budget.currency_id != currency.uuid:
+            raise ValidationError("Transfer and transfer budget currencies must match")
+
+        if transfer_budget and transfer_budget.from_account_id:
+            if transfer_budget.from_account_id != from_account.uuid:
+                raise ValidationError(
+                    "Transfer must use the transfer budget from account"
+                )
+
+        if transfer_budget and transfer_budget.to_account_id:
+            if transfer_budget.to_account_id != to_account.uuid:
+                raise ValidationError(
+                    "Transfer must use the transfer budget to account"
+                )
+
+        if (
+            from_account.kind != account_constants.SAVINGS
+            and to_account.kind != account_constants.SAVINGS
+        ):
+            raise ValidationError("Transfers must involve at least one savings account")
+
+        if request.user.is_owner(workspace) or request.user.is_admin(workspace):
+            return attrs
+
+        if (
+            from_account.user_id != request.user.uuid
+            or to_account.user_id != request.user.uuid
+        ):
+            raise ValidationError(
+                "Members can only transfer between their own accounts"
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        return super().create(
+            {
+                **validated_data,
+                "user": request.user,
+                "workspace": request.user.active_workspace,
+            }
+        )
 
 
 class GroupedByCategorySerializer(serializers.Serializer):

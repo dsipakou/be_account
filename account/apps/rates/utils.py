@@ -3,7 +3,7 @@ import datetime
 from budget.models import Budget
 from currencies.models import Currency
 from rates.models import Rate
-from transactions.models import Transaction
+from transactions.models import Transaction, Transfer
 
 
 def generate_date_seq(days_count):
@@ -13,7 +13,7 @@ def generate_date_seq(days_count):
 
 
 def generate_amount_map(
-    instance: Transaction | Budget,
+    instance: Transaction | Budget | Transfer,
     rates: list[Rate],
     workspace,
 ) -> dict[str, int]:

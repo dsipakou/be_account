@@ -10,6 +10,7 @@ from django.db.models import QuerySet
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+from accounts import constants as account_constants
 from categories import constants as category_constants
 from categories.models import Category
 from currencies.models import Currency
@@ -26,7 +27,12 @@ from transactions.entities import (
     TransactionItem,
     TransactionSpentInCurrencyDetails,
 )
-from transactions.models import Transaction, TransactionMulticurrency
+from transactions.models import (
+    Transaction,
+    TransactionMulticurrency,
+    Transfer,
+    TransferMulticurrency,
+)
 from workspaces.models import Workspace
 
 
@@ -354,14 +360,87 @@ class TransactionService:
         return transactions
 
 
+class TransferService:
+    @classmethod
+    def create_transfer_multicurrency_amount(
+        cls, uuids: list[UUID], workspace: Workspace
+    ) -> None:
+        transfers = Transfer.objects.select_related("currency").filter(
+            uuid__in=uuids, workspace=workspace
+        )
+        dates = transfers.values_list("transfer_date", flat=True).distinct()
+        rates_on_date = Rate.objects.filter(rate_date__in=dates, workspace=workspace)
+        for transfer in transfers:
+            amount_mapping = generate_amount_map(transfer, rates_on_date, workspace)
+
+            TransferMulticurrency.objects.update_or_create(
+                transfer=transfer, defaults={"amount_map": amount_mapping}
+            )
+
+
 class ReportService:
+    TRANSFER_GROUP_NAME = "Transfers"
+
+    @classmethod
+    def _is_spending_transfer(cls, transfer: Transfer) -> bool:
+        return (
+            transfer.from_account.kind == account_constants.SPENDING
+            and transfer.to_account.kind == account_constants.SAVINGS
+        )
+
+    @classmethod
+    def _get_amount_for_currency(
+        cls, amount_map: dict[str, float], currency_code: str, fallback_amount: float
+    ) -> float:
+        return amount_map.get(currency_code, fallback_amount)
+
     @classmethod
     def get_year_report(
         cls, date_from: str, date_to: str, currency_code: str, workspace: str
     ):
-        return Transaction.grouped_by_month(
-            date_from, date_to, currency_code, workspace
-        )
+        grouped_amounts: dict[datetime.date, float] = defaultdict(float)
+
+        transactions = Transaction.objects.filter(
+            workspace=workspace,
+            transaction_date__gte=date_from,
+            transaction_date__lte=date_to,
+            category__type=category_constants.EXPENSE,
+        ).select_related("multicurrency")
+
+        for transaction in transactions:
+            grouped_amounts[transaction.transaction_date] += (
+                cls._get_amount_for_currency(
+                    transaction.multicurrency_map,
+                    currency_code,
+                    transaction.amount,
+                )
+            )
+
+        transfers = Transfer.objects.filter(
+            workspace=workspace,
+            transfer_date__gte=date_from,
+            transfer_date__lte=date_to,
+        ).select_related("multicurrency", "from_account", "to_account")
+
+        for transfer in transfers:
+            if not cls._is_spending_transfer(transfer):
+                continue
+            grouped_amounts[transfer.transfer_date] += cls._get_amount_for_currency(
+                transfer.multicurrency_map,
+                currency_code,
+                transfer.amount,
+            )
+
+        output = []
+        for report_date, amount in sorted(grouped_amounts.items()):
+            output.append(
+                {
+                    "month": report_date.strftime("%Y-%m"),
+                    "day": report_date.day,
+                    "grouped_amount": round(amount, 5),
+                }
+            )
+        return output
 
     @classmethod
     def get_chart_report(
@@ -372,12 +451,34 @@ class ReportService:
         date_to: str,
         currency_code: str,
         till_day: int | None = None,
+        workspace: Workspace | None = None,
     ):
         grouped_transactions = Transaction.grouped_by_month_and_category(
             qs, date_from, date_to, currency_code, till_day
         )
 
         grouped_map = cls._get_grouped_map(grouped_transactions)
+
+        transfers = Transfer.objects.none()
+        if workspace:
+            transfers = Transfer.objects.filter(
+                workspace=workspace,
+                transfer_date__gte=date_from,
+                transfer_date__lte=date_to,
+            ).select_related("multicurrency", "from_account", "to_account")
+
+        for transfer in transfers:
+            if not cls._is_spending_transfer(transfer):
+                continue
+            key = transfer.transfer_date.strftime("%Y-%m")
+            grouped_map[key] = grouped_map.get(key, {})
+            grouped_map[key][cls.TRANSFER_GROUP_NAME] = grouped_map[key].get(
+                cls.TRANSFER_GROUP_NAME, 0
+            ) + cls._get_amount_for_currency(
+                transfer.multicurrency_map,
+                currency_code,
+                transfer.amount,
+            )
 
         start_date = date_from
         end_date = date_to
@@ -389,6 +490,16 @@ class ReportService:
             start_date = start_date.replace(day=1)
 
         categories_list = categories_qs.filter(parent__isnull=True).order_by("name")
+        category_names = list(categories_list)
+        if any(
+            cls.TRANSFER_GROUP_NAME in month_map for month_map in grouped_map.values()
+        ):
+            category_names.append(
+                Category(
+                    name=cls.TRANSFER_GROUP_NAME,
+                    type=category_constants.EXPENSE,
+                )
+            )
 
         output = []
 
@@ -397,7 +508,7 @@ class ReportService:
             current_item["date"] = date_item
             grouped_item = grouped_map.get(date_item, {})
             current_date_category_list = []
-            for category in categories_list:
+            for category in category_names:
                 categories_map = {}
                 categories_map["name"] = category.name
                 categories_map["value"] = grouped_item.get(category.name, 0)

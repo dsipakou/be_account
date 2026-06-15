@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from account.apps.transactions.serializers import LastViewedSerializer
 from categories import constants
 from categories.models import Category
-from transactions.models import LastViewed, Transaction
+from transactions.models import LastViewed, Transaction, Transfer
 from transactions.serializers import (
     AccountUsageSerializer,
     GroupedTransactionSerializer,
@@ -32,8 +32,10 @@ from transactions.serializers import (
     TransactionDetailsSerializer,
     TransactionSerializer,
     TransactionUpdateSerializer,
+    TransferCreateSerializer,
+    TransferSerializer,
 )
-from transactions.services import ReportService, TransactionService
+from transactions.services import ReportService, TransactionService, TransferService
 from users.filters import FilterByUser
 from workspaces.filters import FilterByWorkspace
 
@@ -235,6 +237,53 @@ class TransactionDetails(RetrieveDestroyAPIView):
     lookup_field = "uuid"
 
 
+class TransferListCreate(ListCreateAPIView):
+    queryset = Transfer.objects.select_related(
+        "currency",
+        "from_account",
+        "to_account",
+        "transfer_budget",
+        "user",
+        "multicurrency",
+    ).all()
+    filter_backends = (FilterByUser, FilterByWorkspace)
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return TransferCreateSerializer
+        return TransferSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        transfer = serializer.save()
+        TransferService.create_transfer_multicurrency_amount(
+            [transfer.uuid], workspace=request.user.active_workspace
+        )
+        transfer.refresh_from_db()
+        response_serializer = TransferSerializer(transfer)
+        headers = self.get_success_headers(response_serializer.data)
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
+
+class TransferDetails(RetrieveDestroyAPIView):
+    queryset = Transfer.objects.select_related(
+        "currency",
+        "from_account",
+        "to_account",
+        "transfer_budget",
+        "user",
+        "multicurrency",
+    ).all()
+    serializer_class = TransferSerializer
+    filter_backends = (FilterByUser, FilterByWorkspace)
+    lookup_field = "uuid"
+
+
 class TransactionGroupedList(ListAPIView):
     filter_backends = (FilterByUser, FilterByWorkspace)
     serializer_class = GroupedTransactionSerializer
@@ -279,7 +328,13 @@ class TransactionReportMonthly(ListAPIView):
         currency_code = request.GET.get("currency")
         number_of_days = request.GET.get("numberOfDays")
         data = ReportService.get_chart_report(
-            qs, categories_qs, date_from, date_to, currency_code, number_of_days
+            qs,
+            categories_qs,
+            date_from,
+            date_to,
+            currency_code,
+            number_of_days,
+            request.user.active_workspace,
         )
         serializer = self.get_serializer(data, many=True)
         return Response(serializer.data)

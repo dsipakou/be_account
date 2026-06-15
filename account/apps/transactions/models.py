@@ -191,10 +191,64 @@ class Transaction(models.Model):
         return grouped_transactions
 
 
+class Transfer(models.Model):
+    uuid = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey("users.User", on_delete=models.DO_NOTHING, to_field="uuid")
+    workspace = models.ForeignKey(
+        "workspaces.Workspace",
+        to_field="uuid",
+        on_delete=models.DO_NOTHING,
+    )
+    from_account = models.ForeignKey(
+        "accounts.Account",
+        related_name="outgoing_transfers",
+        on_delete=models.DO_NOTHING,
+        to_field="uuid",
+    )
+    to_account = models.ForeignKey(
+        "accounts.Account",
+        related_name="incoming_transfers",
+        on_delete=models.DO_NOTHING,
+        to_field="uuid",
+    )
+    currency = models.ForeignKey(Currency, on_delete=models.DO_NOTHING, to_field="uuid")
+    transfer_budget = models.ForeignKey(
+        "transfer_budgets.TransferBudget",
+        null=True,
+        blank=True,
+        on_delete=models.DO_NOTHING,
+        to_field="uuid",
+    )
+    amount = models.FloatField()
+    description = models.CharField(max_length=255, blank=True)
+    transfer_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    modified_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def multicurrency_map(self):
+        return (
+            self.multicurrency.amount_map
+            if hasattr(self, "multicurrency") and self.multicurrency
+            else {}
+        )
+
+
 class TransactionMulticurrency(models.Model):
     uuid = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
     transaction = models.OneToOneField(
         Transaction,
+        related_name="multicurrency",
+        to_field="uuid",
+        on_delete=models.CASCADE,
+    )
+    amount_map = models.JSONField(default=dict)
+
+
+class TransferMulticurrency(models.Model):
+    uuid = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
+    transfer = models.OneToOneField(
+        Transfer,
         related_name="multicurrency",
         to_field="uuid",
         on_delete=models.CASCADE,
