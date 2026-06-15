@@ -70,6 +70,9 @@ class TransferSerializer(serializers.ModelSerializer):
     )
     to_account_details = TransferAccountSerializer(source="to_account", read_only=True)
     currency_details = TransactionCurrencySerializer(source="currency", read_only=True)
+    spent_in_currencies = serializers.DictField(
+        source="multicurrency_map", read_only=True
+    )
 
     class Meta:
         model = Transfer
@@ -81,8 +84,10 @@ class TransferSerializer(serializers.ModelSerializer):
             "to_account",
             "to_account_details",
             "currency",
+            "transfer_budget",
             "currency_details",
             "amount",
+            "spent_in_currencies",
             "description",
             "transfer_date",
             "created_at",
@@ -97,6 +102,7 @@ class TransferCreateSerializer(serializers.ModelSerializer):
             "from_account",
             "to_account",
             "currency",
+            "transfer_budget",
             "amount",
             "description",
             "transfer_date",
@@ -108,6 +114,7 @@ class TransferCreateSerializer(serializers.ModelSerializer):
         from_account = attrs["from_account"]
         to_account = attrs["to_account"]
         currency = attrs["currency"]
+        transfer_budget = attrs.get("transfer_budget")
 
         if from_account == to_account:
             raise ValidationError("Cannot transfer to the same account")
@@ -124,6 +131,24 @@ class TransferCreateSerializer(serializers.ModelSerializer):
             raise ValidationError(
                 "Transfer currency must belong to the active workspace"
             )
+
+        if transfer_budget and transfer_budget.workspace_id != workspace.uuid:
+            raise ValidationError("Transfer budget must belong to the active workspace")
+
+        if transfer_budget and transfer_budget.currency_id != currency.uuid:
+            raise ValidationError("Transfer and transfer budget currencies must match")
+
+        if transfer_budget and transfer_budget.from_account_id:
+            if transfer_budget.from_account_id != from_account.uuid:
+                raise ValidationError(
+                    "Transfer must use the transfer budget from account"
+                )
+
+        if transfer_budget and transfer_budget.to_account_id:
+            if transfer_budget.to_account_id != to_account.uuid:
+                raise ValidationError(
+                    "Transfer must use the transfer budget to account"
+                )
 
         if (
             from_account.kind != account_constants.SAVINGS

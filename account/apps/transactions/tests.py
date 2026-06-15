@@ -11,15 +11,23 @@ from budget.services import BudgetService
 from categories import constants as category_constants
 from categories.models import Category
 from currencies.models import Currency
+from rates.models import Rate
+from rates.services import RateService
 from roles.constants import Roles
 from roles.models import Role, UserRole
-from transactions.models import Transaction, TransactionMulticurrency, Transfer
+from transactions.models import (
+    Transaction,
+    TransactionMulticurrency,
+    Transfer,
+    TransferMulticurrency,
+)
 from transactions.serializers import (
     TransactionBulkCreateSerializer,
     TransactionCreateSerializer,
     TransactionUpdateSerializer,
 )
-from transactions.services import TransactionService
+from transactions.services import ReportService, TransactionService
+from transfer_budgets.models import TransferBudget, TransferBudgetMulticurrency
 from users.models import User
 from workspaces.models import Workspace
 
@@ -244,6 +252,21 @@ class TransferTests(TestCase):
             is_default=True,
             workspace=cls.workspace,
         )
+        cls.eur_currency = Currency.objects.create(
+            code="EU",
+            sign="EU",
+            verbal_name="Euro",
+            is_base=False,
+            is_default=False,
+            workspace=cls.workspace,
+        )
+        Rate.objects.create(
+            currency=cls.eur_currency,
+            rate_date=datetime.date.today(),
+            rate=0.8,
+            workspace=cls.workspace,
+            base_currency=cls.currency,
+        )
         for user in (cls.owner, cls.member, cls.admin):
             user.default_currency = cls.currency
             user.save(update_fields=("default_currency",))
@@ -323,6 +346,21 @@ class TransferTests(TestCase):
             budget=cls.owner_budget,
             amount_map={cls.currency.code: cls.owner_budget.amount},
         )
+        cls.transfer_budget = TransferBudget.objects.create(
+            uuid=uuid.uuid4(),
+            title="Emergency Fund",
+            user=cls.owner,
+            currency=cls.currency,
+            amount=500.0,
+            budget_date=datetime.date.today(),
+            workspace=cls.workspace,
+            from_account=cls.owner_spending,
+            to_account=cls.owner_savings,
+        )
+        TransferBudgetMulticurrency.objects.create(
+            transfer_budget=cls.transfer_budget,
+            amount_map={cls.currency.code: cls.transfer_budget.amount},
+        )
 
     def setUp(self):
         self.owner_client = APIClient()
@@ -338,7 +376,7 @@ class TransferTests(TestCase):
             {
                 "from_account": str(self.owner_spending.uuid),
                 "to_account": str(self.owner_savings.uuid),
-                "currency": str(self.currency.uuid),
+                "currency": str(self.eur_currency.uuid),
                 "amount": 500,
                 "description": "Monthly savings",
                 "transfer_date": datetime.date.today().isoformat(),
@@ -348,6 +386,56 @@ class TransferTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(Transfer.objects.count(), 1)
+        self.assertEqual(response.data["spent_in_currencies"]["EU"], 500.0)
+        self.assertEqual(response.data["spent_in_currencies"]["USD"], 400.0)
+
+        multicurrency = TransferMulticurrency.objects.get(
+            transfer__uuid=response.data["uuid"]
+        )
+        self.assertEqual(multicurrency.amount_map["EU"], 500.0)
+        self.assertEqual(multicurrency.amount_map["USD"], 400.0)
+
+    def test_transfer_with_matching_transfer_budget_succeeds(self):
+        response = self.owner_client.post(
+            "/transactions/transfers/",
+            {
+                "from_account": str(self.owner_spending.uuid),
+                "to_account": str(self.owner_savings.uuid),
+                "currency": str(self.currency.uuid),
+                "amount": 200,
+                "description": "Planned savings",
+                "transfer_date": datetime.date.today().isoformat(),
+                "transfer_budget": str(self.transfer_budget.uuid),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            str(Transfer.objects.get(uuid=response.data["uuid"]).transfer_budget_id),
+            str(self.transfer_budget.uuid),
+        )
+
+    def test_transfer_with_mismatched_transfer_budget_from_account_fails(self):
+        response = self.owner_client.post(
+            "/transactions/transfers/",
+            {
+                "from_account": str(self.member_spending.uuid),
+                "to_account": str(self.owner_savings.uuid),
+                "currency": str(self.currency.uuid),
+                "amount": 200,
+                "description": "Invalid planned savings",
+                "transfer_date": datetime.date.today().isoformat(),
+                "transfer_budget": str(self.transfer_budget.uuid),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["non_field_errors"][0],
+            "Transfer must use the transfer budget from account",
+        )
 
     def test_savings_to_spending_transfer_succeeds(self):
         response = self.owner_client.post(
@@ -512,10 +600,41 @@ class TransferTests(TestCase):
         self.assertEqual(len(owner_response.data), 2)
         self.assertEqual(len(admin_response.data), 2)
         self.assertEqual(len(member_response.data), 1)
+        self.assertIn("spent_in_currencies", owner_response.data[0])
         self.assertEqual(
             str(member_response.data[0]["uuid"]), str(member_transfer.uuid)
         )
         self.assertNotEqual(owner_transfer.uuid, member_transfer.uuid)
+
+    def test_transfer_multicurrency_updates_when_rates_change(self):
+        transfer = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_spending,
+            to_account=self.owner_savings,
+            currency=self.eur_currency,
+            amount=100,
+            description="Monthly savings",
+            transfer_date=datetime.date.today(),
+        )
+        TransferMulticurrency.objects.create(
+            transfer=transfer,
+            amount_map={"EU": 100.0, "USD": 80.0},
+        )
+
+        RateService.create_batched_rates(
+            {
+                "user": self.owner.uuid,
+                "base_currency": self.currency.uuid,
+                "rate_date": datetime.date.today(),
+                "items": [{"currency": self.eur_currency.uuid, "rate": 0.5}],
+            }
+        )
+
+        transfer_multicurrency = TransferMulticurrency.objects.get(transfer=transfer)
+        self.assertEqual(transfer_multicurrency.amount_map["EU"], 100.0)
+        self.assertEqual(transfer_multicurrency.amount_map["USD"], 50.0)
 
     def test_deleting_account_referenced_by_transfer_fails(self):
         Transfer.objects.create(
@@ -538,7 +657,7 @@ class TransferTests(TestCase):
             "This account has at least one transaction or transfer",
         )
 
-    def test_transfers_do_not_affect_reports_or_budgets(self):
+    def test_transfers_do_not_affect_budget_spending(self):
         transaction = Transaction.objects.create(
             uuid=uuid.uuid4(),
             user=self.owner,
@@ -589,3 +708,142 @@ class TransferTests(TestCase):
         )
         self.assertIsNotNone(food_result)
         self.assertEqual(food_result["spent"], 80.0)
+
+    def test_year_report_includes_spending_to_savings_transfers(self):
+        transaction = Transaction.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            category=self.expense_category,
+            budget=self.owner_budget,
+            currency=self.currency,
+            amount=80,
+            account=self.owner_spending,
+            description="Groceries",
+            transaction_date=datetime.date.today(),
+            workspace=self.workspace,
+        )
+        TransactionMulticurrency.objects.create(
+            transaction=transaction,
+            amount_map={self.currency.code: transaction.amount},
+        )
+        transfer = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_spending,
+            to_account=self.owner_savings,
+            currency=self.currency,
+            amount=120,
+            description="Monthly savings",
+            transfer_date=datetime.date.today(),
+            transfer_budget=self.transfer_budget,
+        )
+        TransferMulticurrency.objects.create(
+            transfer=transfer,
+            amount_map={self.currency.code: transfer.amount},
+        )
+
+        report = ReportService.get_year_report(
+            datetime.datetime.combine(datetime.date.today(), datetime.time.min),
+            datetime.datetime.combine(datetime.date.today(), datetime.time.max),
+            self.currency.code,
+            self.workspace.uuid,
+        )
+
+        self.assertEqual(len(report), 1)
+        self.assertEqual(report[0]["grouped_amount"], 200.0)
+
+    def test_year_report_excludes_non_spending_transfer_directions(self):
+        transfer_out = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_savings,
+            to_account=self.owner_spending,
+            currency=self.currency,
+            amount=120,
+            description="Withdraw",
+            transfer_date=datetime.date.today(),
+        )
+        TransferMulticurrency.objects.create(
+            transfer=transfer_out,
+            amount_map={self.currency.code: transfer_out.amount},
+        )
+        transfer_between_savings = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_savings,
+            to_account=self.member_savings,
+            currency=self.currency,
+            amount=75,
+            description="Move savings",
+            transfer_date=datetime.date.today(),
+        )
+        TransferMulticurrency.objects.create(
+            transfer=transfer_between_savings,
+            amount_map={self.currency.code: transfer_between_savings.amount},
+        )
+
+        report = ReportService.get_year_report(
+            datetime.datetime.combine(datetime.date.today(), datetime.time.min),
+            datetime.datetime.combine(datetime.date.today(), datetime.time.max),
+            self.currency.code,
+            self.workspace.uuid,
+        )
+
+        self.assertEqual(report, [])
+
+    def test_monthly_chart_report_includes_transfers_bucket(self):
+        transaction = Transaction.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            category=self.expense_category,
+            budget=self.owner_budget,
+            currency=self.currency,
+            amount=80,
+            account=self.owner_spending,
+            description="Groceries",
+            transaction_date=datetime.date.today(),
+            workspace=self.workspace,
+        )
+        TransactionMulticurrency.objects.create(
+            transaction=transaction,
+            amount_map={self.currency.code: transaction.amount},
+        )
+        transfer = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_spending,
+            to_account=self.owner_savings,
+            currency=self.currency,
+            amount=120,
+            description="Monthly savings",
+            transfer_date=datetime.date.today(),
+            transfer_budget=self.transfer_budget,
+        )
+        TransferMulticurrency.objects.create(
+            transfer=transfer,
+            amount_map={self.currency.code: transfer.amount},
+        )
+
+        report = ReportService.get_chart_report(
+            Transaction.objects.filter(workspace=self.workspace),
+            Category.objects.filter(workspace=self.workspace),
+            datetime.datetime.combine(
+                datetime.date.today().replace(day=1), datetime.time.min
+            ),
+            datetime.datetime.combine(datetime.date.today(), datetime.time.max),
+            self.currency.code,
+            None,
+            self.workspace,
+        )
+
+        self.assertEqual(len(report), 1)
+        transfers_category = next(
+            category
+            for category in report[0]["categories"]
+            if category["name"] == "Transfers"
+        )
+        self.assertEqual(transfers_category["value"], 120.0)

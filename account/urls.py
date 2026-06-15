@@ -25,6 +25,7 @@ urlpatterns = [
     path("categories/", include("categories.urls")),
     path("currencies/", include("currencies.urls")),
     path("rates/", include("rates.urls")),
+    path("transfer-budgets/", include("transfer_budgets.urls")),
     path("transactions/", include("transactions.urls")),
     path("users/", include("users.urls")),
     path("roles/", include("roles.urls")),

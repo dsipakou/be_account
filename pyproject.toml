@@ -49,7 +49,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 # Configure import sorting (isort replacement)
-known-first-party = ["budget", "categories", "currencies", "rates", "transactions", "users", "workspaces", "accounts", "roles"]
+known-first-party = ["budget", "categories", "currencies", "rates", "transactions", "users", "workspaces", "accounts", "roles", "transfer_budgets"]
 known-third-party = ["django", "rest_framework", "dateutil", "psycopg2", "uvicorn", "gunicorn"]
 
 [tool.ruff.format]

@@ -35,7 +35,7 @@ from transactions.serializers import (
     TransferCreateSerializer,
     TransferSerializer,
 )
-from transactions.services import ReportService, TransactionService
+from transactions.services import ReportService, TransactionService, TransferService
 from users.filters import FilterByUser
 from workspaces.filters import FilterByWorkspace
 
@@ -239,7 +239,12 @@ class TransactionDetails(RetrieveDestroyAPIView):
 
 class TransferListCreate(ListCreateAPIView):
     queryset = Transfer.objects.select_related(
-        "currency", "from_account", "to_account", "user"
+        "currency",
+        "from_account",
+        "to_account",
+        "transfer_budget",
+        "user",
+        "multicurrency",
     ).all()
     filter_backends = (FilterByUser, FilterByWorkspace)
 
@@ -252,6 +257,10 @@ class TransferListCreate(ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         transfer = serializer.save()
+        TransferService.create_transfer_multicurrency_amount(
+            [transfer.uuid], workspace=request.user.active_workspace
+        )
+        transfer.refresh_from_db()
         response_serializer = TransferSerializer(transfer)
         headers = self.get_success_headers(response_serializer.data)
         return Response(
@@ -263,7 +272,12 @@ class TransferListCreate(ListCreateAPIView):
 
 class TransferDetails(RetrieveDestroyAPIView):
     queryset = Transfer.objects.select_related(
-        "currency", "from_account", "to_account", "user"
+        "currency",
+        "from_account",
+        "to_account",
+        "transfer_budget",
+        "user",
+        "multicurrency",
     ).all()
     serializer_class = TransferSerializer
     filter_backends = (FilterByUser, FilterByWorkspace)
@@ -314,7 +328,13 @@ class TransactionReportMonthly(ListAPIView):
         currency_code = request.GET.get("currency")
         number_of_days = request.GET.get("numberOfDays")
         data = ReportService.get_chart_report(
-            qs, categories_qs, date_from, date_to, currency_code, number_of_days
+            qs,
+            categories_qs,
+            date_from,
+            date_to,
+            currency_code,
+            number_of_days,
+            request.user.active_workspace,
         )
         serializer = self.get_serializer(data, many=True)
         return Response(serializer.data)
