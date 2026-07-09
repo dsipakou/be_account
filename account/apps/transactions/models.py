@@ -212,8 +212,8 @@ class Transfer(models.Model):
         to_field="uuid",
     )
     currency = models.ForeignKey(Currency, on_delete=models.DO_NOTHING, to_field="uuid")
-    transfer_budget = models.ForeignKey(
-        "transfer_budgets.TransferBudget",
+    budget = models.ForeignKey(
+        "budget.Budget",
         null=True,
         blank=True,
         on_delete=models.DO_NOTHING,

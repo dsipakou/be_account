@@ -847,3 +847,64 @@ class TransferTests(TestCase):
             if category["name"] == "Transfers"
         )
         self.assertEqual(transfers_category["value"], 120.0)
+
+    def test_last_months_budget_usage_supports_transfers_bucket(self):
+        spending_transfer = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_spending,
+            to_account=self.owner_savings,
+            currency=self.currency,
+            amount=70,
+            description="January savings",
+            transfer_date=datetime.date(2026, 1, 10),
+        )
+        TransferMulticurrency.objects.create(
+            transfer=spending_transfer,
+            amount_map={self.currency.code: spending_transfer.amount},
+        )
+        non_spending_transfer = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_savings,
+            to_account=self.owner_spending,
+            currency=self.currency,
+            amount=45,
+            description="Withdrawal",
+            transfer_date=datetime.date(2026, 3, 10),
+        )
+        TransferMulticurrency.objects.create(
+            transfer=non_spending_transfer,
+            amount_map={self.currency.code: non_spending_transfer.amount},
+        )
+        later_spending_transfer = Transfer.objects.create(
+            uuid=uuid.uuid4(),
+            user=self.owner,
+            workspace=self.workspace,
+            from_account=self.owner_spending,
+            to_account=self.owner_savings,
+            currency=self.currency,
+            amount=90,
+            description="May savings",
+            transfer_date=datetime.date(2026, 5, 10),
+        )
+        TransferMulticurrency.objects.create(
+            transfer=later_spending_transfer,
+            amount_map={self.currency.code: later_spending_transfer.amount},
+        )
+
+        response = self.owner_client.get(
+            "/budget/last-months/",
+            {
+                "month": "2026-06-01",
+                "category": "Transfers",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 6)
+        self.assertEqual(response.data[1]["amount"], 70.0)
+        self.assertEqual(response.data[3]["amount"], 0.0)
+        self.assertEqual(response.data[5]["amount"], 90.0)

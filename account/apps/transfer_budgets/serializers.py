@@ -158,3 +158,13 @@ class TransferBudgetUsageSerializer(serializers.Serializer):
     transfers = serializers.ListField(child=TransferBudgetTransferSerializer())
     created_at = serializers.DateTimeField()
     modified_at = serializers.DateTimeField()
+
+
+class TransferBudgetLastMonthsUsageSerializer(serializers.Serializer):
+    month = serializers.DateField()
+    amount = serializers.FloatField()
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["amount"] = round(data["amount"], 0)
+        return data

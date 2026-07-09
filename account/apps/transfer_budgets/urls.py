@@ -20,6 +20,16 @@ urlpatterns = [
         name="transfer_budget_usage",
     ),
     path(
+        "weekly-usage/",
+        views.TransferBudgetWeeklyUsageList.as_view(),
+        name="transfer_budget_weekly_usage",
+    ),
+    path(
+        "last-months/",
+        views.TransferBudgetLastMonthsUsageList.as_view(),
+        name="transfer_budget_last_months_usage",
+    ),
+    path(
         "series/<uuid:uuid>/stop/",
         views.TransferBudgetSeriesStop.as_view(),
         name="transfer_budget_series_stop",

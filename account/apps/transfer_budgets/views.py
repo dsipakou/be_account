@@ -11,8 +11,10 @@ from rest_framework.generics import (
 from rest_framework.response import Response
 
 from currencies.models import Currency
+from transactions.models import Transfer
 from transfer_budgets.models import TransferBudget
 from transfer_budgets.serializers import (
+    TransferBudgetLastMonthsUsageSerializer,
     TransferBudgetSerializer,
     TransferBudgetUsageSerializer,
 )
@@ -100,6 +102,62 @@ class TransferBudgetUsageList(ListAPIView):
         )
 
         serializer = self.get_serializer(usage, many=True)
+        return Response(serializer.data)
+
+
+class TransferBudgetWeeklyUsageList(ListAPIView):
+    queryset = TransferBudget.objects.all()
+    filter_backends = (FilterByUser, FilterByWorkspace)
+    serializer_class = TransferBudgetUsageSerializer
+
+    def list(self, request, *args, **kwargs):
+        date_from = request.GET.get(
+            "dateFrom", datetime.date.today() - datetime.timedelta(days=30)
+        )
+        date_to = request.GET.get("dateTo", datetime.date.today())
+        user = request.GET.get("user")
+        workspace = request.user.active_workspace
+
+        usage = TransferBudgetReportingService.generate_weekly_report(
+            workspace=workspace,
+            transfer_budgets_qs=self.filter_queryset(self.get_queryset()),
+            currencies_qs=Currency.objects.filter(workspace=workspace),
+            date_from=date_from,
+            date_to=date_to,
+            user=user,
+        )
+
+        serializer = self.get_serializer(usage, many=True)
+        return Response(serializer.data)
+
+
+class TransferBudgetLastMonthsUsageList(ListAPIView):
+    queryset = TransferBudget.objects.all()
+    filter_backends = (FilterByUser, FilterByWorkspace)
+    serializer_class = TransferBudgetLastMonthsUsageSerializer
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        month_request = request.GET.get("month")
+        if month_request:
+            month = datetime.datetime.strptime(month_request, "%Y-%m-%d").date()
+        else:
+            month = datetime.date.today()
+
+        filter_by_user = request.GET.get("user")
+        transfer_budget_uuid = request.GET.get("transferBudget")
+        if not transfer_budget_uuid:
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+
+        usage = TransferBudgetReportingService.get_historical_usage(
+            transfers=Transfer.objects.filter(transfer_budget__in=queryset),
+            month=month,
+            user=request.user,
+            filter_by_user=filter_by_user,
+            transfer_budget_uuid=transfer_budget_uuid,
+        )
+
+        serializer = self.get_serializer(instance=usage, many=True)
         return Response(serializer.data)
 
 
