@@ -86,6 +86,7 @@ class TransactionService:
         if transaction.budget:
             budget_details = TransactionBudgetDetails(
                 title=transaction.budget.title,
+                is_completed=transaction.budget.is_completed,
             )
 
         return TransactionItem(
@@ -267,7 +268,7 @@ class TransactionService:
         date_col_count = len(all_dates)
         sorted_parents = sorted(group_data.keys())
 
-        # "Другое" sorts last within each group
+        # "Others" sorts last within each group
         def child_sort_key(name: str) -> tuple:
             return (name == "Другое", name)
 
