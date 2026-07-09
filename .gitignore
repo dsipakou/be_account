@@ -186,3 +186,6 @@ plans/*
 
 # API
 slumber.yml
+
+# Backups
+backup.sh

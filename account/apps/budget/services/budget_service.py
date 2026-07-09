@@ -360,6 +360,7 @@ class BudgetService:
         cls,
         *,
         transactions: QuerySet,
+        transfers: QuerySet | None,
         month: datetime.date,
         category_uuid: str,
         user: User,
@@ -378,6 +379,7 @@ class BudgetService:
         )
         return BudgetReportingService.get_historical_usage(
             transactions=transactions,
+            transfers=transfers,
             month=month,
             category_uuid=category_uuid,
             user=user,

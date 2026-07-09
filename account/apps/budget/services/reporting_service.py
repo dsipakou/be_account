@@ -12,6 +12,7 @@ from django.db.models import FloatField, Prefetch, QuerySet, Sum, Value
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Coalesce, TruncMonth
 
+from accounts import constants as account_constants
 from budget import utils
 from budget.entities import (
     BudgetItem,
@@ -32,6 +33,8 @@ from workspaces.models import Workspace
 
 class BudgetReportingService:
     """Service for budget reporting and analysis."""
+
+    TRANSFER_GROUP_NAME = "Transfers"
 
     @classmethod
     def _initialize_category_map(
@@ -408,6 +411,7 @@ class BudgetReportingService:
         cls,
         *,
         transactions: QuerySet,
+        transfers: QuerySet | None,
         month: datetime.date,
         category_uuid: str,
         user: User,
@@ -428,6 +432,14 @@ class BudgetReportingService:
         currency_code = user.currency_code()
         if not currency_code:
             return []
+
+        if category_uuid == cls.TRANSFER_GROUP_NAME:
+            return cls._get_transfer_historical_usage(
+                transfers=transfers,
+                month=month,
+                user=user,
+                filter_by_user=filter_by_user,
+            )
 
         selected_month_first_day = month.replace(day=1)
         six_month_earlier = month - relativedelta(months=6)
@@ -479,3 +491,64 @@ class BudgetReportingService:
                 )
             )
         return clean_transactions
+
+    @classmethod
+    def _get_transfer_historical_usage(
+        cls,
+        *,
+        transfers: QuerySet | None,
+        month: datetime.date,
+        user: User,
+        filter_by_user: str | None = None,
+    ) -> list[MonthUsageSum]:
+        currency_code = user.currency_code()
+        if not currency_code or transfers is None:
+            return []
+
+        selected_month_first_day = month.replace(day=1)
+        six_month_earlier = month - relativedelta(months=6)
+
+        transfers = transfers.filter(
+            from_account__kind=account_constants.SPENDING,
+            to_account__kind=account_constants.SAVINGS,
+            transfer_date__lt=selected_month_first_day,
+            transfer_date__gte=six_month_earlier,
+        ).prefetch_related("multicurrency")
+
+        if filter_by_user:
+            transfers = transfers.filter(user=filter_by_user)
+
+        grouped_transfers = transfers.annotate(
+            current_currency_amount=Coalesce(
+                Cast(
+                    KeyTextTransform(currency_code, "multicurrency__amount_map"),
+                    FloatField(),
+                ),
+                Value(0, output_field=FloatField()),
+            )
+        )
+        grouped_transfers = grouped_transfers.annotate(
+            month=TruncMonth("transfer_date")
+        ).values("month")
+        grouped_transfers = grouped_transfers.annotate(
+            amount=Sum("current_currency_amount")
+        ).order_by("month")
+        all_months = rrule(
+            MONTHLY,
+            dtstart=six_month_earlier,
+            until=selected_month_first_day - relativedelta(months=1),
+        )
+
+        clean_transfers: list[MonthUsageSum] = []
+        for current_month in all_months:
+            if transfer := grouped_transfers.filter(month=current_month).first():
+                amount = transfer.get("amount", 0)
+            else:
+                amount = 0
+            clean_transfers.append(
+                MonthUsageSum(
+                    month=current_month.date(),
+                    amount=amount,
+                )
+            )
+        return clean_transfers

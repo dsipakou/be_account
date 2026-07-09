@@ -22,7 +22,7 @@ from budget.services import BudgetService
 from budget.services.series_service import BudgetSeriesService
 from categories.models import Category
 from currencies.models import Currency
-from transactions.models import Transaction
+from transactions.models import Transaction, Transfer
 from users.filters import FilterByUser
 from users.permissions import BaseUserPermission
 from workspaces.filters import FilterByWorkspace
@@ -242,6 +242,7 @@ class LastMonthsBudgetUsageList(ListAPIView):
             transactions=Transaction.objects.prefetch_related("budget").filter(
                 budget__in=queryset
             ),
+            transfers=Transfer.objects.filter(workspace=request.user.active_workspace),
             month=month,
             user=request.user,
             filter_by_user=user,

@@ -65,13 +65,43 @@ class Budget(models.Model):
         (BudgetDuplicateType.MONTHLY.value, "Monthly"),
     )
 
+    class Kind(models.TextChoices):
+        EXPENSE = "EXPENSE"
+        TRANSFER = "TRANSFER"
+
     uuid = models.UUIDField(unique=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey("users.User", on_delete=models.DO_NOTHING, to_field="uuid")
     workspace = models.ForeignKey(
         "workspaces.Workspace", to_field="uuid", on_delete=models.DO_NOTHING
     )
+    kind = models.CharField(
+        max_length=20,
+        choices=Kind.choices,
+        default=Kind.EXPENSE,
+    )
     category = models.ForeignKey(
-        "categories.Category", on_delete=models.CASCADE, to_field="uuid"
+        "categories.Category",
+        on_delete=models.CASCADE,
+        to_field="uuid",
+        null=True,
+        blank=True,
+    )
+    from_account = models.ForeignKey(
+        "accounts.Account",
+        null=True,
+        blank=True,
+        related_name="budgets_from_account",
+        on_delete=models.DO_NOTHING,
+        to_field="uuid",
+    )
+
+    to_account = models.ForeignKey(
+        "accounts.Account",
+        null=True,
+        blank=True,
+        related_name="budgets_to_account",
+        on_delete=models.DO_NOTHING,
+        to_field="uuid",
     )
     currency = models.ForeignKey(
         "currencies.Currency", on_delete=models.DO_NOTHING, to_field="uuid"
