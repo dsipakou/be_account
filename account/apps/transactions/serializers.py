@@ -19,6 +19,7 @@ class TransactionAccountSerializer(serializers.Serializer):
 
 class TransactionBudgetSerializer(serializers.Serializer):
     title = serializers.CharField()
+    is_completed = serializers.BooleanField()
 
 
 class TransactionCurrencySerializer(serializers.Serializer):

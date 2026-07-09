@@ -26,6 +26,7 @@ class TransactionSpentInCurrencyDetails(TypedDict):
 
 class TransactionBudgetDetails(TypedDict):
     title: str
+    is_completed: bool
 
 
 class TransactionItem(TypedDict):
