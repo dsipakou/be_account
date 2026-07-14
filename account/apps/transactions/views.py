@@ -17,6 +17,7 @@ from rest_framework.response import Response
 
 from account.apps.transactions.serializers import LastViewedSerializer
 from categories import constants
+from categories.constants import CAPITAL_EXPENSE
 from categories.models import Category
 from transactions.models import LastViewed, Transaction, Transfer
 from transactions.serializers import (
@@ -322,7 +323,9 @@ class TransactionReportMonthly(ListAPIView):
 
     def list(self, request, *args, **kwargs):
         qs = self.filter_queryset(self.get_queryset())
-        categories_qs = self.filter_queryset(Category.objects.all())
+        categories_qs = self.filter_queryset(
+            Category.objects.exclude(type=CAPITAL_EXPENSE)
+        )
         date_to = datetime.strptime(request.GET["dateTo"], "%Y-%m-%d")
         date_from = datetime.strptime(request.GET["dateFrom"], "%Y-%m-%d")
         currency_code = request.GET.get("currency")
