@@ -153,6 +153,7 @@ class Transaction(models.Model):
             )
             .annotate(transaction_count=models.Count("pk"))
             .filter(transaction_date__range=(date_from, date_to))
+            .exclude(category__type=category_constants.CAPITAL_EXPENSE)
         )
 
         if till_day is not None:
